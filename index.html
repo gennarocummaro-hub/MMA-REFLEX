@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>MMA Reflex Trainer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ HOME ============ -->
+<section id="scr-home" class="screen attiva">
+  <h1>MMA REFLEX</h1>
+  <div class="modi">
+    <button class="btn modo" data-modo="esplosivita">
+      <span class="modo-nome">ESPLOSIVITÀ</span>
+      <span class="modo-sub">6 × 8s / 50s — ~6 min</span>
+    </button>
+    <button class="btn modo" data-modo="cardio-tecnica">
+      <span class="modo-nome">CARDIO-TECNICA</span>
+      <span class="modo-sub">5 × 4 min / 60s</span>
+    </button>
+    <button class="btn modo" data-modo="libera">
+      <span class="modo-nome">LIBERA</span>
+      <span class="modo-sub">parametri liberi</span>
+    </button>
+    <button class="btn modo" data-modo="test-rt">
+      <span class="modo-nome">TEST RT</span>
+      <span class="modo-sub">fase 5</span>
+    </button>
+  </div>
+  <div class="riga-secondaria">
+    <button class="btn secondario" data-vai="storico">STORICO</button>
+    <button class="btn secondario" data-vai="impostazioni">IMPOSTAZIONI</button>
+  </div>
+  <p class="avviso">Su iOS la voce si interrompe se lo schermo si blocca. Tieni il telefono sbloccato e il volume alto. Modalità Silenzioso disattivata.</p>
+</section>
+
+<!-- ============ SESSIONE ============ -->
+<section id="scr-sessione" class="screen">
+  <div id="fase-label" class="fase-label">LAVORO</div>
+  <div id="timer" class="timer">00:00</div>
+  <div id="round-label" class="round-label">ROUND 1 / 5</div>
+  <div id="ultimo-comando" class="ultimo-comando">&nbsp;</div>
+  <div class="barra-stato">
+    <span>densità <b id="densita-live">0.0</b>/min</span>
+    <span>comandi <b id="conta-comandi">0</b></span>
+  </div>
+  <div class="riga-controlli">
+    <button id="btn-pausa" class="btn controllo">PAUSA</button>
+    <button id="btn-stop" class="btn controllo pericolo">STOP</button>
+  </div>
+</section>
+
+<!-- ============ FINE ROUND ============ -->
+<div id="modal-fine-round" class="modal">
+  <div class="modal-box">
+    <h2 id="fr-titolo">FINE ROUND 1</h2>
+    <div class="campo">
+      <label>ERRORI</label>
+      <div class="stepper">
+        <button class="btn step" data-err="-1">−</button>
+        <b id="fr-errori">0</b>
+        <button class="btn step" data-err="1">+</button>
+      </div>
+    </div>
+    <div class="campo">
+      <label>RPE</label>
+      <div id="fr-rpe" class="rpe"></div>
+    </div>
+    <div id="fr-calo" class="campo nascosto">
+      <label>VELOCITÀ CALATA?</label>
+      <div class="stepper">
+        <button class="btn step lungo" data-calo="1">SÌ</button>
+        <button class="btn step lungo" data-calo="0">NO</button>
+      </div>
+    </div>
+    <div id="fr-recupero" class="fr-recupero">RECUPERO 00:00</div>
+    <button id="fr-ok" class="btn primario">CONFERMA</button>
+  </div>
+</div>
+
+<!-- ============ IMPOSTAZIONI ============ -->
+<section id="scr-impostazioni" class="screen">
+  <div class="testata">
+    <button class="btn indietro" data-vai="home">‹ HOME</button>
+    <h2>IMPOSTAZIONI</h2>
+  </div>
+  <div class="scroll">
+    <h3>GUARDIA</h3>
+    <div class="campo-riga">
+      <label>Striking</label>
+      <select id="set-guardia-striking"><option value="ortodossa">ortodossa</option><option value="southpaw">southpaw</option></select>
+    </div>
+    <div class="campo-riga">
+      <label>Lotta</label>
+      <select id="set-guardia-lotta"><option value="ortodossa">ortodossa</option><option value="southpaw">southpaw</option></select>
+    </div>
+    <p class="nota" id="nota-guardia"></p>
+
+    <h3>FOREPERIOD</h3>
+    <div class="campo-riga"><label>fpMin (ms)</label><input id="set-fpmin" type="number" min="200" max="10000" step="50"></div>
+    <div class="campo-riga"><label>fpMax (ms)</label><input id="set-fpmax" type="number" min="300" max="15000" step="50"></div>
+    <div class="campo-riga"><label>lambda</label><input id="set-lambda" type="number" min="0.1" max="5" step="0.1"></div>
+
+    <h3>ROUND</h3>
+    <div class="campo-riga"><label>n° round</label><input id="set-round" type="number" min="1" max="20" step="1"></div>
+    <div class="campo-riga"><label>lavoro (s)</label><input id="set-lavoro" type="number" min="5" max="900" step="1"></div>
+    <div class="campo-riga"><label>recupero (s)</label><input id="set-recupero" type="number" min="5" max="600" step="1"></div>
+
+    <h3>VOCE</h3>
+    <div class="campo-riga"><label>voce</label><select id="set-voce"></select></div>
+    <div class="campo-riga"><label>rate</label><input id="set-rate" type="number" min="0.5" max="2" step="0.05"></div>
+    <button id="btn-prova-voce" class="btn secondario largo">PROVA VOCE</button>
+
+    <h3>CATEGORIE</h3>
+    <div id="lista-categorie"></div>
+
+    <h3>COMANDI</h3>
+    <div id="lista-comandi"></div>
+
+    <h3>COMANDO CUSTOM</h3>
+    <div class="campo-riga"><label>label</label><input id="cc-label" type="text" placeholder="es. spinning back fist"></div>
+    <div class="campo-riga"><label>execMs</label><input id="cc-exec" type="number" min="100" max="10000" step="50" value="600"></div>
+    <div class="campo-riga"><label>categoria</label><select id="cc-cat"></select></div>
+    <button id="cc-add" class="btn secondario largo">AGGIUNGI COMANDO</button>
+
+    <h3>PRESET</h3>
+    <div class="campo-riga"><label>nome</label><input id="preset-nome" type="text" placeholder="nome preset"></div>
+    <button id="preset-salva" class="btn secondario largo">SALVA CONFIGURAZIONE CORRENTE</button>
+    <div id="lista-preset"></div>
+
+    <button id="btn-reset" class="btn secondario largo pericolo-testo">RIPRISTINA DEFAULT</button>
+    <div class="spazio"></div>
+  </div>
+</section>
+
+<!-- ============ STORICO ============ -->
+<section id="scr-storico" class="screen">
+  <div class="testata">
+    <button class="btn indietro" data-vai="home">‹ HOME</button>
+    <h2>STORICO</h2>
+  </div>
+  <div class="scroll">
+    <p class="nota">Log, storico ed export CSV sono la fase 6 del piano di costruzione. Non ancora attivi.</p>
+  </div>
+</section>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

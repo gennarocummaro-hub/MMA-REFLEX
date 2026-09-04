@@ -1,0 +1,123 @@
+/* MMA REFLEX TRAINER — tema scuro, alto contrasto, leggibile a 2-3 metri */
+
+:root {
+  --nero: #000000;
+  --grigio-recupero: #1e1e1e;
+  --superficie: #141414;
+  --bordo: #333333;
+  --testo: #ffffff;
+  --testo-tenue: #9a9a9a;
+  --accento: #ff3b30;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--nero); color: var(--testo);
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  font-weight: 700;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+body.in-sessione { background: var(--nero); }
+body.in-sessione.fase-recupero { background: var(--grigio-recupero); }
+
+.screen { display: none; height: 100%; flex-direction: column; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+.screen.attiva { display: flex; }
+
+h1 { font-size: 2.2rem; letter-spacing: 0.12em; text-align: center; margin: 24px 0 20px; }
+h2 { font-size: 1.4rem; letter-spacing: 0.06em; margin: 0; }
+h3 { font-size: 1rem; letter-spacing: 0.12em; color: var(--testo-tenue); margin: 26px 0 8px; border-bottom: 1px solid var(--bordo); padding-bottom: 6px; }
+h4 { font-size: 0.8rem; letter-spacing: 0.1em; color: var(--testo-tenue); margin: 16px 0 4px; }
+
+/* ---------- pulsanti ---------- */
+.btn {
+  font-family: inherit; font-weight: 800; color: var(--testo);
+  background: var(--superficie); border: 2px solid var(--bordo);
+  border-radius: 12px; padding: 14px 16px; font-size: 1.1rem;
+  cursor: pointer; touch-action: manipulation;
+}
+.btn:active { background: #262626; }
+.btn.primario { background: var(--testo); color: var(--nero); border-color: var(--testo); width: 100%; font-size: 1.3rem; padding: 18px; }
+.btn.secondario { font-size: 0.95rem; }
+.btn.secondario.largo { width: 100%; margin-top: 8px; }
+.btn.pericolo { border-color: var(--accento); color: var(--accento); }
+.pericolo-testo { color: var(--accento); }
+.btn.mini { padding: 6px 12px; font-size: 1rem; }
+.btn.indietro { border: none; background: none; padding: 12px 8px 12px 0; font-size: 1rem; color: var(--testo-tenue); }
+
+/* ---------- home ---------- */
+.modi { display: flex; flex-direction: column; gap: 12px; }
+.btn.modo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 20px 18px; }
+.modo-nome { font-size: 1.6rem; letter-spacing: 0.06em; }
+.modo-sub { font-size: 0.85rem; font-weight: 600; color: var(--testo-tenue); letter-spacing: 0.04em; }
+.riga-secondaria { display: flex; gap: 12px; margin-top: 20px; }
+.riga-secondaria .btn { flex: 1; }
+.avviso { margin-top: auto; margin-bottom: 16px; font-size: 0.8rem; font-weight: 600; line-height: 1.4; color: var(--testo-tenue); }
+
+/* ---------- sessione ---------- */
+#scr-sessione { justify-content: space-between; padding-top: calc(env(safe-area-inset-top) + 8px); }
+.fase-label { text-align: center; font-size: 1rem; letter-spacing: 0.28em; color: var(--testo-tenue); }
+.timer {
+  flex: 0 0 60%; display: flex; align-items: center; justify-content: center;
+  font-size: 27vw; line-height: 1; font-variant-numeric: tabular-nums;
+  font-weight: 800; letter-spacing: -0.02em;
+}
+.round-label { text-align: center; font-size: 1.3rem; letter-spacing: 0.1em; color: var(--testo-tenue); }
+.ultimo-comando {
+  text-align: center; font-size: 1.9rem; letter-spacing: 0.02em;
+  margin: 10px 0; min-height: 2.4rem; word-break: break-word;
+}
+.barra-stato {
+  display: flex; justify-content: space-between; font-size: 0.95rem;
+  font-weight: 600; color: var(--testo-tenue); border-top: 1px solid var(--bordo); padding-top: 10px;
+}
+.barra-stato b { color: var(--testo); }
+.riga-controlli { display: flex; gap: 12px; padding: 12px 0 20px; }
+.riga-controlli .btn { flex: 1; font-size: 1.2rem; padding: 20px; }
+
+/* ---------- modale fine round ---------- */
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 20; }
+.modal.visibile { display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-box { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; background: var(--superficie); border: 2px solid var(--bordo); border-radius: 16px; padding: 20px; }
+.campo { margin: 18px 0; }
+.campo > label { display: block; font-size: 0.85rem; letter-spacing: 0.14em; color: var(--testo-tenue); margin-bottom: 8px; }
+.campo.nascosto { display: none; }
+.stepper { display: flex; align-items: center; gap: 14px; }
+.stepper b { font-size: 2rem; min-width: 2ch; text-align: center; }
+.btn.step { min-width: 56px; font-size: 1.3rem; padding: 12px; }
+.btn.step.lungo { flex: 1; }
+.btn.step.scelto { background: var(--testo); color: var(--nero); border-color: var(--testo); }
+.rpe { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.rpe .btn { min-width: 0; }
+.fr-recupero { text-align: center; font-size: 1.1rem; color: var(--testo-tenue); margin: 14px 0; letter-spacing: 0.08em; }
+
+/* ---------- impostazioni / storico ---------- */
+.testata { display: flex; align-items: center; gap: 12px; padding-top: 10px; }
+.scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 40px; }
+.campo-riga { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid #222; }
+.campo-riga label { font-size: 1rem; font-weight: 700; display: flex; align-items: center; gap: 10px; flex: 1; }
+.campo-riga.comando label { font-weight: 600; font-size: 0.95rem; }
+.campo-riga i { color: var(--testo-tenue); font-size: 0.75rem; font-style: normal; letter-spacing: 0.08em; }
+input[type="checkbox"] { width: 26px; height: 26px; accent-color: var(--testo); flex: 0 0 auto; }
+input[type="number"], input[type="text"], select {
+  font-family: inherit; font-weight: 700; font-size: 1rem;
+  background: #0c0c0c; color: var(--testo); border: 1px solid var(--bordo);
+  border-radius: 8px; padding: 10px; min-width: 0;
+}
+input[type="number"] { width: 100px; text-align: right; }
+input.peso, input.exec { width: 84px; }
+input[type="text"], select { flex: 1; max-width: 60%; }
+.nota { font-size: 0.85rem; font-weight: 600; color: var(--testo-tenue); line-height: 1.4; }
+.spazio { height: 40px; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  background: var(--testo); color: var(--nero); font-size: 0.95rem; font-weight: 800;
+  padding: 12px 18px; border-radius: 10px; opacity: 0; pointer-events: none;
+  max-width: 90%; text-align: center; z-index: 30;
+}
+.toast.visibile { opacity: 1; }

@@ -25,7 +25,7 @@
     </button>
     <button class="btn modo" data-modo="libera">
       <span class="modo-nome">LIBERA</span>
-      <span class="modo-sub">parametri liberi</span>
+      <span class="modo-sub">parametra tutto, poi parti</span>
     </button>
     <button class="btn modo" data-modo="test-rt">
       <span class="modo-nome">TEST RT</span>
@@ -83,57 +83,38 @@
   </div>
 </div>
 
+<!-- ============ SETUP SESSIONE LIBERA ============ -->
+<section id="scr-setup" class="screen">
+  <div class="testata">
+    <button class="btn indietro" data-vai="home">‹ HOME</button>
+    <h2>SETUP LIBERA</h2>
+  </div>
+  <div class="scroll" id="pannello-setup"></div>
+  <div class="barra-azione">
+    <button id="btn-avvia-libera" class="btn primario">AVVIA SESSIONE</button>
+  </div>
+</section>
+
 <!-- ============ IMPOSTAZIONI ============ -->
 <section id="scr-impostazioni" class="screen">
   <div class="testata">
     <button class="btn indietro" data-vai="home">‹ HOME</button>
     <h2>IMPOSTAZIONI</h2>
   </div>
+  <div class="scroll" id="pannello-impostazioni"></div>
+</section>
+
+<!-- ============ VOCE COACH ============ -->
+<section id="scr-voce" class="screen">
+  <div class="testata">
+    <button class="btn indietro" data-vai="impostazioni">‹ INDIETRO</button>
+    <h2>VOCE COACH</h2>
+  </div>
   <div class="scroll">
-    <h3>GUARDIA</h3>
-    <div class="campo-riga">
-      <label>Striking</label>
-      <select id="set-guardia-striking"><option value="ortodossa">ortodossa</option><option value="southpaw">southpaw</option></select>
-    </div>
-    <div class="campo-riga">
-      <label>Lotta</label>
-      <select id="set-guardia-lotta"><option value="ortodossa">ortodossa</option><option value="southpaw">southpaw</option></select>
-    </div>
-    <p class="nota" id="nota-guardia"></p>
-
-    <h3>FOREPERIOD</h3>
-    <div class="campo-riga"><label>fpMin (ms)</label><input id="set-fpmin" type="number" min="200" max="10000" step="50"></div>
-    <div class="campo-riga"><label>fpMax (ms)</label><input id="set-fpmax" type="number" min="300" max="15000" step="50"></div>
-    <div class="campo-riga"><label>lambda</label><input id="set-lambda" type="number" min="0.1" max="5" step="0.1"></div>
-
-    <h3>ROUND</h3>
-    <div class="campo-riga"><label>n° round</label><input id="set-round" type="number" min="1" max="20" step="1"></div>
-    <div class="campo-riga"><label>lavoro (s)</label><input id="set-lavoro" type="number" min="5" max="900" step="1"></div>
-    <div class="campo-riga"><label>recupero (s)</label><input id="set-recupero" type="number" min="5" max="600" step="1"></div>
-
-    <h3>VOCE</h3>
-    <div class="campo-riga"><label>voce</label><select id="set-voce"></select></div>
-    <div class="campo-riga"><label>rate</label><input id="set-rate" type="number" min="0.5" max="2" step="0.05"></div>
-    <button id="btn-prova-voce" class="btn secondario largo">PROVA VOCE</button>
-
-    <h3>CATEGORIE</h3>
-    <div id="lista-categorie"></div>
-
-    <h3>COMANDI</h3>
-    <div id="lista-comandi"></div>
-
-    <h3>COMANDO CUSTOM</h3>
-    <div class="campo-riga"><label>label</label><input id="cc-label" type="text" placeholder="es. spinning back fist"></div>
-    <div class="campo-riga"><label>execMs</label><input id="cc-exec" type="number" min="100" max="10000" step="50" value="600"></div>
-    <div class="campo-riga"><label>categoria</label><select id="cc-cat"></select></div>
-    <button id="cc-add" class="btn secondario largo">AGGIUNGI COMANDO</button>
-
-    <h3>PRESET</h3>
-    <div class="campo-riga"><label>nome</label><input id="preset-nome" type="text" placeholder="nome preset"></div>
-    <button id="preset-salva" class="btn secondario largo">SALVA CONFIGURAZIONE CORRENTE</button>
-    <div id="lista-preset"></div>
-
-    <button id="btn-reset" class="btn secondario largo pericolo-testo">RIPRISTINA DEFAULT</button>
+    <p class="nota">Registra i comandi con la tua voce o quella del tuo allenatore.
+    Dove c'è una clip, l'app usa quella al posto della sintesi vocale.
+    Pronuncia il comando secco, senza pause davanti: l'onset della clip è lo stimolo.</p>
+    <div id="lista-clip"></div>
     <div class="spazio"></div>
   </div>
 </section>

@@ -121,3 +121,20 @@ input[type="text"], select { flex: 1; max-width: 60%; }
   max-width: 90%; text-align: center; z-index: 30;
 }
 .toast.visibile { opacity: 1; }
+
+/* ---------- barra azione fissa (setup) ---------- */
+.barra-azione { padding: 12px 0 calc(env(safe-area-inset-bottom) + 16px); border-top: 1px solid var(--bordo); background: var(--nero); }
+
+/* ---------- gruppi di comandi ---------- */
+.testata-gruppo { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.testata-gruppo h4 { margin: 0; }
+.azioni-gruppo { display: flex; gap: 8px; }
+.nota.allarme { color: var(--accento); }
+
+/* ---------- voce coach ---------- */
+.campo-riga.clip { gap: 8px; }
+.clip-nome { flex: 1; font-size: 0.95rem; font-weight: 600; color: var(--testo-tenue); }
+.clip-nome.con-clip { color: var(--testo); }
+.clip-nome.con-clip::before { content: '● '; color: #35c759; }
+.btn.mini.rec { min-width: 62px; }
+.btn.mini.in-registrazione { background: var(--accento); border-color: var(--accento); color: #fff; }

@@ -150,6 +150,9 @@ function cfgDefault() {
     pitch: 1.0,
     volume: 1.0,
     voiceURI: null,
+    testRT: true,
+    rtSempliceN: 15,
+    rtSceltaN: 20,
     round: 5,
     durataLavoroS: 240,
     durataRecuperoS: 60,
@@ -270,6 +273,78 @@ function costruisciStimolo(comando) {
     latoFisico: lato ? latoFisico(comando, lato, cfg) : null,
     parlato: parlato,
     execMs: comando.execMs
+  };
+}
+
+/* -------------------------------------------------------------------------
+   CATENE — sequenze tecnicamente coerenti.
+   Il primo elemento e' una normale estrazione (e quindi rispetta i vincoli
+   di §2.3 rispetto agli stimoli precedenti); i successivi seguono la
+   matrice di transizione dei piani. I vincoli "mai due volte lo stesso
+   comando" e "mai 3 di fila della stessa categoria" valgono sulla scelta
+   dello stimolo, non dentro la catena: la matrice ammette esplicitamente
+   striking -> striking, cioe' le combinazioni di pugni.
+   ------------------------------------------------------------------------- */
+
+function interoTra(min, max) {
+  const a = Math.min(min, max), b = Math.max(min, max);
+  return a + Math.floor(Math.random() * (b - a + 1));
+}
+
+function costruisciCatena(disponibili, storia) {
+  const lunghezza = interoTra(cfg.catenaMin, cfg.catenaMax);
+  const primo = selezionaComando(disponibili, storia);
+  if (!primo) return [];
+  const elementi = [primo];
+  while (elementi.length < lunghezza) {
+    const precedente = elementi[elementi.length - 1];
+    const ammessi = TRANSIZIONI[precedente.piano] || [];
+    const candidati = disponibili.filter(c => ammessi.indexOf(c.piano) >= 0 && c.id !== precedente.id);
+    if (!candidati.length) break;      /* vicolo cieco: la catena finisce qui */
+    elementi.push(candidati[Math.floor(Math.random() * candidati.length)]);
+  }
+  return elementi;
+}
+
+/* verifica che una sequenza di comandi rispetti la matrice (criterio 6) */
+function catenaValida(elementi) {
+  for (let i = 1; i < elementi.length; i++) {
+    const ammessi = TRANSIZIONI[elementi[i - 1].piano] || [];
+    if (ammessi.indexOf(elementi[i].piano) < 0) return false;
+  }
+  return true;
+}
+
+/* -------------------------------------------------------------------------
+   EVENTO — cosa viene emesso al prossimo stimolo.
+   No-go e stop-signal sono mutuamente esclusivi per costruzione: lo stop
+   viene estratto solo se il no-go non e' uscito.
+   ------------------------------------------------------------------------- */
+
+let contatoreNoGoAlternato = 0;
+
+function modoNoGo() {
+  if (cfg.noGoModo === 'A' || cfg.noGoModo === 'B') return cfg.noGoModo;
+  return (contatoreNoGoAlternato++ % 2 === 0) ? 'A' : 'B';   /* AB: alternate */
+}
+
+function costruisciEvento(disponibili, storia) {
+  if (Math.random() < cfg.pNoGo) {
+    /* nessuna esecuzione da attendere: la risposta corretta e' non rispondere */
+    return { tipo: 'nogo', modo: modoNoGo(), execMs: 0, stop: false };
+  }
+  const elementi = (Math.random() < cfg.pCatena)
+    ? costruisciCatena(disponibili, storia)
+    : [selezionaComando(disponibili, storia)].filter(Boolean);
+  if (!elementi.length) return null;
+  const stimoli = elementi.map(costruisciStimolo);
+  return {
+    tipo: 'go',
+    elementi: elementi,
+    stimoli: stimoli,
+    catena: elementi.length > 1,
+    execMs: stimoli.reduce((t, s) => t + s.execMs, 0),
+    stop: Math.random() < cfg.pStop
   };
 }
 
@@ -680,26 +755,30 @@ const Sessione = {
   fineFaseAt: 0,           /* istante performance.now() di fine fase */
   restanteInPausa: 0,
   timerStimolo: null,
+  timerStop: null,
   timerFase: null,
   timerUI: null,
   timerAvviso10s: null,
   storia: [],
+  ssdLog: [],
   contatori: null,
   record: null,
   caloConsecutivi: 0,
   wakeLock: null,
 
   /* ---------- avvio ---------- */
-  async avvia(modo) {
+  async avvia(modo, testPre) {
     this.modo = modo;
     this.attiva = true;
     this.inPausa = false;
     this.roundTotali = cfg.round;
     this.roundCorrente = 0;
     this.caloConsecutivi = 0;
+    this.ssdLog = [];
     this.record = {
       id: uuid(), data: new Date().toISOString(), modalita: modo,
-      configurazione: clonaProfondo(cfg), round: [], distribuzioneComandi: {}
+      configurazione: clonaProfondo(cfg), round: [], distribuzioneComandi: {},
+      testRT: { pre: testPre || null, post: null, delta: null }
     };
     await this.acquisisciWakeLock();
     /* le clip vengono decodificate qui, non durante il round */
@@ -748,30 +827,88 @@ const Sessione = {
     const disponibili = pool();
     if (!disponibili.length) { mostraToast('Nessun comando attivo'); this.termina(false); return; }
 
-    const comando = selezionaComando(disponibili, this.storia);
-    const stimolo = costruisciStimolo(comando);
-    this.storia.push(comando);
+    const evento = costruisciEvento(disponibili, this.storia);
+    if (!evento) return;
 
     /* se il precedente è ancora in pronuncia, troncalo */
     Voce.troncaSeInCorso();
     const onset = performance.now();
-    Voce.speak(stimolo.parlato);
-
-    this.contatori.comandi += 1;
     this.contatori.stimoli += 1;
-    const d = this.record.distribuzioneComandi;
-    d[comando.id] = (d[comando.id] || 0) + 1;
 
-    mostraUltimoComando(stimolo);
+    if (evento.tipo === 'nogo') {
+      this.emettiNoGo(evento);
+      /* dopo un no-go il foreperiod si calcola normalmente */
+      this.programmaStimolo(onset + evento.execMs + foreperiod());
+      aggiornaUISessione();
+      return;
+    }
+
+    evento.elementi.forEach(c => this.registraComando(c));
+    const parlati = evento.stimoli.map(s => s.parlato);
+    if (evento.catena) Voce.speakSequenza(parlati, 180);
+    else Voce.speak(parlati[0]);
+
+    mostraUltimoComando(evento);
     aggiornaUISessione();
 
-    /* tProssimo = tFineEsecuzione + foreperiod */
-    const fineEsecuzione = onset + stimolo.execMs;
-    this.programmaStimolo(fineEsecuzione + foreperiod());
+    /* tProssimo = tFineEsecuzione + foreperiod. execMs di una catena e' la
+       somma degli execMs dei componenti. */
+    this.programmaStimolo(onset + evento.execMs + foreperiod());
+
+    if (evento.stop) {
+      const ssd = cfg.ssdMin + Math.random() * (cfg.ssdMax - cfg.ssdMin);
+      if (this.timerStop) this.timerStop.annulla();
+      this.timerStop = armaA(onset + ssd, () => this.emettiStop(onset));
+    }
+  },
+
+  registraComando(comando) {
+    this.storia.push(comando);
+    this.contatori.comandi += 1;
+    const d = this.record.distribuzioneComandi;
+    d[comando.id] = (d[comando.id] || 0) + 1;
+  },
+
+  emettiNoGo(evento) {
+    this.contatori.noGo += 1;
+    if (evento.modo === 'A') Voce.speak(cfg.parolaNoGo);
+    else Suono.sequenza([[880, 60], [880, 60]], 60);
+    mostraUltimoComando(evento);
+  },
+
+  /* stop-signal: arriva fra ssdMin e ssdMax dall'onset del comando go */
+  emettiStop(onsetGo) {
+    if (!this.attiva || this.inPausa || this.fase !== 'lavoro') return;
+    this.contatori.stop += 1;
+    this.ssdLog.push(performance.now() - onsetGo);
+
+    if (!cfg.stopConCambio) {
+      /* stop semplice: l'azione va abortita. Il prossimo stimolo resta
+         programmato sulla finestra del comando interrotto. */
+      if (cfg.stopSegnale === 'parola') { Voce.troncaSeInCorso(); Voce.speak('stop'); }
+      else Suono.beep(220, 120);
+      mostraUltimoComando({ tipo: 'stop' });
+      return;
+    }
+
+    /* variante con cambio: un nuovo comando sovrascrive il precedente.
+       La finestra di esecuzione riparte dall'onset del nuovo comando. */
+    const disponibili = pool();
+    const nuovo = selezionaComando(disponibili, this.storia);
+    if (!nuovo) return;
+    const stimolo = costruisciStimolo(nuovo);
+    Voce.troncaSeInCorso();
+    const onsetNuovo = performance.now();
+    Voce.speak(stimolo.parlato);
+    this.registraComando(nuovo);
+    mostraUltimoComando({ tipo: 'go', stimoli: [stimolo], cambio: true });
+    aggiornaUISessione();
+    this.programmaStimolo(onsetNuovo + stimolo.execMs + foreperiod());
   },
 
   fineLavoro() {
     if (this.timerStimolo) this.timerStimolo.annulla();
+    if (this.timerStop) this.timerStop.annulla();
     Voce.cancella();
     Suono.fineRound();
     const durataS = cfg.durataLavoroS;
@@ -800,6 +937,7 @@ const Sessione = {
     this.inPausa = true;
     this.restanteInPausa = Math.max(0, this.fineFaseAt - performance.now());
     if (this.timerStimolo) this.timerStimolo.annulla();
+    if (this.timerStop) this.timerStop.annulla();
     if (this.timerFase) this.timerFase.annulla();
     if (this.timerAvviso10s) this.timerAvviso10s.annulla();
     Voce.cancella();
@@ -822,14 +960,29 @@ const Sessione = {
     this.attiva = false;
     this.fase = 'fine';
     if (this.timerStimolo) this.timerStimolo.annulla();
+    if (this.timerStop) this.timerStop.annulla();
     if (this.timerFase) this.timerFase.annulla();
     if (this.timerAvviso10s) this.timerAvviso10s.annulla();
     if (this.timerUI) { clearTimeout(this.timerUI); this.timerUI = null; }
     Voce.cancella();
     chiudiFineRound(true);
+    /* il test RT finale chiude la sessione: il delta pre/post e' l'indice
+       di fatica, quindi ha senso solo su una sessione portata a termine */
+    if (completata && cfg.testRT && this.record && this.record.testRT.pre) {
+      TestRT.avvia('post', risultati => {
+        this.record.testRT.post = risultati;
+        this.record.testRT.delta = deltaRT(this.record.testRT.pre, risultati);
+        this.finalizza(true, true);
+      }, () => this.finalizza(true, false));   /* uscita: la sessione si salva comunque */
+      return;
+    }
+    this.finalizza(completata, false);
+  },
+
+  finalizza(completata, conTabella) {
     this.rilasciaWakeLock();
-    /* il salvataggio del record è la fase 6 */
-    console.log('[sessione]', this.record);
+    if (this.record) salvaSessione(this.record);
+    if (conTabella) { TestRT.mostraTabella(this.record.testRT); return; }
     mostraSchermo('home');
     mostraToast(completata ? 'Sessione completata' : 'Sessione interrotta');
   },
@@ -916,6 +1069,569 @@ function eliminaPreset(nome) {
 }
 
 /* =========================================================================
+   7bis. TEST DEL TEMPO DI REAZIONE
+   L'unica misura oggettiva senza sensori. Va eseguito all'inizio e alla fine
+   della sessione: il delta e' l'indice di fatica del sistema nervoso.
+   Tutti i tempi con performance.now(); l'onset e' quello AUDIO, ricavato da
+   AudioContext, non dall'istante in cui gira il JS.
+   ========================================================================= */
+
+const RT_QUADRANTI = [
+  { colore: 'rosso',  freq: 350 },
+  { colore: 'verde',  freq: 550 },
+  { colore: 'blu',    freq: 800 },
+  { colore: 'giallo', freq: 1150 }
+];
+const RT_FREQ_SEMPLICE = 1000;   /* distinta dai segnali di struttura */
+const RT_FP_MIN = 1000, RT_FP_MAX = 4000;
+const RT_ANTICIPAZIONE = 150, RT_LAPSE = 1500, RT_TIMEOUT = 2000;
+
+function statisticheRT(valori) {
+  const n = valori.length;
+  if (!n) return { media: 0, mediana: 0, sd: 0, n: 0 };
+  const somma = valori.reduce((a, b) => a + b, 0);
+  const media = somma / n;
+  const ord = valori.slice().sort((a, b) => a - b);
+  const mediana = (n % 2) ? ord[(n - 1) / 2] : (ord[n / 2 - 1] + ord[n / 2]) / 2;
+  /* deviazione standard campionaria (n-1), la convenzione nei report di RT */
+  const sd = n > 1 ? Math.sqrt(valori.reduce((a, b) => a + (b - media) * (b - media), 0) / (n - 1)) : 0;
+  const arrotonda = x => Math.round(x * 10) / 10;
+  return { media: arrotonda(media), mediana: arrotonda(mediana), sd: arrotonda(sd), n: n };
+}
+
+const TestRT = {
+  momento: null,          /* 'pre' | 'post' */
+  callback: null,
+  blocco: null,           /* 'semplice' | 'scelta' */
+  indice: 0,
+  totale: 0,
+  onset: null,
+  inAttesa: false,        /* stimolo presentato, aspetto la risposta */
+  quadranteAtteso: null,
+  timerStimolo: null,
+  timerTimeout: null,
+  prove: null,
+  risultati: null,
+
+  avvia(momento, callback, onAbbandono) {
+    this.momento = momento;
+    this.callback = callback || function () {};
+    this.onAbbandono = onAbbandono || function () { mostraSchermo('home'); };
+    this.prove = { semplice: [], scelta: [] };
+    this.risultati = null;
+    Sessione.acquisisciWakeLock();
+    mostraSchermo('rt');
+    this.mostraIstruzioni('semplice');
+  },
+
+  vista(quale) {
+    ['rt-intro', 'rt-area', 'rt-risultati'].forEach(id => {
+      document.getElementById(id).classList.toggle('visibile', id === quale);
+    });
+  },
+
+  mostraIstruzioni(blocco) {
+    this.blocco = blocco;
+    const etichetta = this.momento === 'post' ? 'FINALE' : 'INIZIALE';
+    if (blocco === 'semplice') {
+      $('#rt-titolo').textContent = 'RT SEMPLICE — ' + etichetta;
+      $('#rt-testo').textContent = cfg.rtSempliceN + ' stimoli. Appena senti il beep, tocca lo schermo. ' +
+        'Non anticipare: le risposte sotto ' + RT_ANTICIPAZIONE + ' ms vengono scartate.';
+    } else {
+      $('#rt-titolo').textContent = 'RT DI SCELTA — ' + etichetta;
+      $('#rt-testo').textContent = cfg.rtSceltaN + ' stimoli. Si illumina uno dei quattro quadranti, ' +
+        'ognuno con un suono diverso: tocca il quadrante illuminato.';
+    }
+    $('#rt-salta').classList.toggle('nascosto', this.momento === 'post');
+    this.vista('rt-intro');
+  },
+
+  avviaBlocco() {
+    this.indice = 0;
+    this.totale = (this.blocco === 'semplice') ? cfg.rtSempliceN : cfg.rtSceltaN;
+    $('#rt-semplice').classList.toggle('visibile', this.blocco === 'semplice');
+    $('#rt-quadranti').classList.toggle('visibile', this.blocco === 'scelta');
+    $('#rt-esito').textContent = '\u00a0';
+    this.vista('rt-area');
+    this.prossimaProva();
+  },
+
+  prossimaProva() {
+    if (this.indice >= this.totale) { this.chiudiBlocco(); return; }
+    this.indice++;
+    $('#rt-progresso').textContent = this.indice + ' / ' + this.totale;
+    this.onset = null;
+    this.inAttesa = false;
+    this.spegni();
+    const attesa = foreperiod(RT_FP_MIN, RT_FP_MAX, cfg.lambda);
+    if (this.timerStimolo) this.timerStimolo.annulla();
+    this.timerStimolo = armaA(performance.now() + attesa, () => this.presentaStimolo());
+  },
+
+  presentaStimolo() {
+    if (this.blocco === 'semplice') {
+      this.quadranteAtteso = null;
+      this.onset = Suono.beep(RT_FREQ_SEMPLICE, 80);
+      $('#rt-semplice').classList.add('acceso');
+    } else {
+      const q = Math.floor(Math.random() * RT_QUADRANTI.length);
+      this.quadranteAtteso = q;
+      this.onset = Suono.beep(RT_QUADRANTI[q].freq, 80);
+      $$('#rt-quadranti .quadrante')[q].classList.add('acceso');
+    }
+    this.inAttesa = true;
+    clearTimeout(this.timerTimeout);
+    this.timerTimeout = setTimeout(() => this.registra(null, RT_TIMEOUT + 1), RT_TIMEOUT);
+  },
+
+  spegni() {
+    $('#rt-semplice').classList.remove('acceso');
+    $$('#rt-quadranti .quadrante').forEach(q => q.classList.remove('acceso'));
+  },
+
+  /* tempo: preferisci event.timeStamp, che e' l'istante dell'input e non
+     quello in cui il gestore viene eseguito */
+  tocco(quadrante, evento) {
+    if (this.blocco === null) return;
+    let ora = performance.now();
+    if (evento && typeof evento.timeStamp === 'number' && evento.timeStamp > 0 &&
+        Math.abs(evento.timeStamp - ora) < 1000) ora = evento.timeStamp;
+    if (!this.inAttesa) {
+      /* tap prima dello stimolo: e' un'anticipazione a tutti gli effetti */
+      if (this.timerStimolo) this.timerStimolo.annulla();
+      this.registra(quadrante, -1);
+      return;
+    }
+    this.registra(quadrante, ora - this.onset);
+  },
+
+  registra(quadrante, rt) {
+    if (this.blocco === null) return;
+    clearTimeout(this.timerTimeout);
+    this.inAttesa = false;
+    this.spegni();
+    const corretto = (this.blocco === 'semplice') ? true : (quadrante === this.quadranteAtteso);
+    const anticipazione = rt < RT_ANTICIPAZIONE;
+    const lapse = rt > RT_LAPSE;
+    this.prove[this.blocco].push({ rt: rt, corretto: corretto, anticipazione: anticipazione, lapse: lapse });
+
+    const e = $('#rt-esito');
+    e.classList.remove('errore', 'scartato');
+    if (anticipazione) { e.textContent = 'ANTICIPO'; e.classList.add('scartato'); }
+    else if (lapse) { e.textContent = 'TROPPO LENTO'; e.classList.add('scartato'); }
+    else if (!corretto) { e.textContent = 'ERRORE  ' + Math.round(rt) + ' ms'; e.classList.add('errore'); }
+    else { e.textContent = Math.round(rt) + ' ms'; }
+
+    setTimeout(() => this.prossimaProva(), 450);
+  },
+
+  chiudiBlocco() {
+    if (this.blocco === 'semplice') { this.mostraIstruzioni('scelta'); return; }
+    this.blocco = null;
+    this.risultati = this.riassunto();
+    this.callback(this.risultati);
+  },
+
+  riassunto() {
+    const out = {};
+    ['semplice', 'scelta'].forEach(b => {
+      const p = this.prove[b];
+      /* le statistiche si calcolano sulle risposte valide E corrette */
+      const validi = p.filter(x => !x.anticipazione && !x.lapse && x.corretto).map(x => x.rt);
+      const st = statisticheRT(validi);
+      out[b] = {
+        media: st.media, mediana: st.mediana, sd: st.sd,
+        anticipazioni: p.filter(x => x.anticipazione).length,
+        lapse: p.filter(x => x.lapse).length,
+        validi: st.n
+      };
+      if (b === 'scelta') out[b].errori = p.filter(x => !x.corretto && !x.anticipazione && !x.lapse).length;
+    });
+    return out;
+  },
+
+  /* uscita a meta' test: il chiamante decide cosa farne */
+  abbandona() {
+    const uscita = this.onAbbandono;
+    this.ferma();
+    uscita();
+  },
+
+  /* interrompe il test in corso senza lasciare timer appesi */
+  ferma() {
+    this.blocco = null;
+    this.inAttesa = false;
+    if (this.timerStimolo) this.timerStimolo.annulla();
+    clearTimeout(this.timerTimeout);
+    this.spegni();
+  },
+
+  mostraTabella(testRT) {
+    $('#rt-tabella').innerHTML = '';
+    $('#rt-tabella').appendChild(tabellaRT(testRT));
+    mostraSchermo('rt');
+    this.vista('rt-risultati');
+  }
+};
+
+/* delta pre/post: assoluto e percentuale, su media e mediana */
+function deltaRT(pre, post) {
+  if (!pre || !post) return null;
+  const d = {};
+  ['semplice', 'scelta'].forEach(b => {
+    ['media', 'mediana'].forEach(m => {
+      const a = pre[b][m], z = post[b][m];
+      const chiave = b + m.charAt(0).toUpperCase() + m.slice(1);
+      d[chiave + 'Ms'] = Math.round((z - a) * 10) / 10;
+      d[chiave + 'Pct'] = a ? Math.round((z - a) / a * 1000) / 10 : 0;
+    });
+  });
+  return d;
+}
+
+function tabellaRT(testRT) {
+  const contenitore = document.createElement('div');
+  if (!testRT || (!testRT.pre && !testRT.post)) {
+    contenitore.appendChild(el('p', 'nota', 'Nessun dato.'));
+    return contenitore;
+  }
+  const delta = deltaRT(testRT.pre, testRT.post);
+  [['semplice', 'RT SEMPLICE'], ['scelta', 'RT DI SCELTA']].forEach(([b, titolo]) => {
+    contenitore.appendChild(el('h3', null, titolo));
+    const t = el('table', 'rt');
+    const righe = [['media (ms)', 'media'], ['mediana (ms)', 'mediana'], ['dev. std', 'sd'],
+                   ['anticipazioni', 'anticipazioni'], ['lapse', 'lapse']];
+    if (b === 'scelta') righe.push(['errori', 'errori']);
+    const thead = el('tr');
+    ['', 'PRE', 'POST', 'Δ'].forEach(h => thead.appendChild(el('th', null, h)));
+    t.appendChild(thead);
+    righe.forEach(([etichetta, chiave]) => {
+      const tr = el('tr');
+      tr.appendChild(el('td', null, etichetta));
+      const pre = testRT.pre ? testRT.pre[b][chiave] : null;
+      const post = testRT.post ? testRT.post[b][chiave] : null;
+      tr.appendChild(el('td', null, pre == null ? '—' : String(pre)));
+      tr.appendChild(el('td', null, post == null ? '—' : String(post)));
+      let testoDelta = '—';
+      if (pre != null && post != null) {
+        const diff = Math.round((post - pre) * 10) / 10;
+        const pct = (chiave === 'media' || chiave === 'mediana') && pre
+          ? '  (' + (diff >= 0 ? '+' : '') + (Math.round((post - pre) / pre * 1000) / 10) + '%)' : '';
+        testoDelta = (diff >= 0 ? '+' : '') + diff + pct;
+      }
+      const td = el('td', null, testoDelta);
+      if (pre != null && post != null && post !== pre) td.classList.add(post > pre ? 'peggio' : 'meglio');
+      tr.appendChild(td);
+      t.appendChild(tr);
+    });
+    contenitore.appendChild(t);
+  });
+  if (delta) {
+    contenitore.appendChild(el('p', 'nota',
+      'Un delta positivo sulla media significa reazione più lenta a fine sessione: è la fatica del sistema nervoso. ' +
+      'Le statistiche usano solo le risposte valide e corrette; anticipazioni, lapse ed errori sono contati a parte.'));
+  }
+  return contenitore;
+}
+
+/* =========================================================================
+   7ter. LOG, STORICO, EXPORT
+   ========================================================================= */
+
+const CHIAVE_SESSIONI = 'mmarx.sessioni.v1';
+const MAX_SESSIONI = 400;
+
+function sessioniSalvate() {
+  try {
+    const raw = localStorage.getItem(CHIAVE_SESSIONI);
+    const lista = raw ? JSON.parse(raw) : [];
+    return Array.isArray(lista) ? lista : [];
+  } catch (e) { console.warn('storico illeggibile', e); return []; }
+}
+
+function salvaSessione(record) {
+  /* una sessione senza round e senza test non ha niente da dire */
+  if (!record || (!record.round.length && !record.testRT.pre && !record.testRT.post)) return false;
+  const lista = sessioniSalvate();
+  lista.push(record);
+  while (lista.length > MAX_SESSIONI) lista.shift();
+  try { localStorage.setItem(CHIAVE_SESSIONI, JSON.stringify(lista)); return true; }
+  catch (e) { mostraToast('Storico pieno: esporta e cancella'); return false; }
+}
+
+function eliminaSessione(id) {
+  const lista = sessioniSalvate().filter(s => s.id !== id);
+  localStorage.setItem(CHIAVE_SESSIONI, JSON.stringify(lista));
+}
+
+function dataLeggibile(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+/* ---- export CSV ---- */
+
+const COLONNE_RT = ['media', 'mediana', 'sd', 'anticipazioni', 'lapse', 'errori'];
+
+function intestazioneCSV() {
+  const testa = ['sessioneId', 'data', 'modalita', 'round', 'durataS', 'comandiEmessi',
+                 'densita', 'noGoEmessi', 'stopEmessi', 'erroriRiportati', 'rpe'];
+  ['pre', 'post'].forEach(m => {
+    ['semplice', 'scelta'].forEach(b => {
+      COLONNE_RT.forEach(k => {
+        if (k === 'errori' && b === 'semplice') return;
+        testa.push('rt_' + m + '_' + b + '_' + k);
+      });
+    });
+  });
+  testa.push('delta_semplice_media_ms', 'delta_semplice_media_pct',
+             'delta_scelta_media_ms', 'delta_scelta_media_pct');
+  return testa;
+}
+
+function celleRT(testRT) {
+  const out = [];
+  ['pre', 'post'].forEach(m => {
+    ['semplice', 'scelta'].forEach(b => {
+      COLONNE_RT.forEach(k => {
+        if (k === 'errori' && b === 'semplice') return;
+        const v = testRT && testRT[m] && testRT[m][b] ? testRT[m][b][k] : '';
+        out.push(v == null ? '' : v);
+      });
+    });
+  });
+  const d = testRT && testRT.delta;
+  out.push(d ? d.sempliceMediaMs : '', d ? d.sempliceMediaPct : '',
+           d ? d.sceltaMediaMs : '', d ? d.sceltaMediaPct : '');
+  return out;
+}
+
+function campoCSV(v) {
+  const t = String(v == null ? '' : v);
+  return /[",;\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+
+function csvSessioni() {
+  const righe = [intestazioneCSV()];
+  sessioniSalvate().forEach(s => {
+    const rt = celleRT(s.testRT);
+    if (!s.round.length) {
+      righe.push([s.id, s.data, s.modalita, '', '', '', '', '', '', '', ''].concat(rt));
+      return;
+    }
+    s.round.forEach(r => {
+      righe.push([s.id, s.data, s.modalita, r.n, r.durataS, r.comandiEmessi, r.densita,
+                  r.noGoEmessi, r.stopEmessi, r.erroriRiportati, r.rpe == null ? '' : r.rpe].concat(rt));
+    });
+  });
+  return righe.map(r => r.map(campoCSV).join(',')).join('\n');
+}
+
+function scaricaCSV() {
+  const testo = csvSessioni();
+  const blob = new Blob([testo], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'mma-reflex-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/* ---- grafico dell'RT medio pre nel tempo ----
+   Serie categoriali validate sulla superficie scura (#141414): blu #3987e5 e
+   arancio #d95926, coppia con separazione CVD ampia. Due serie => legenda
+   sempre presente piu' etichetta diretta sull'ultimo punto: l'identita' non
+   e' mai affidata al solo colore. */
+
+const RT_SERIE = [
+  { chiave: 'semplice', nome: 'RT semplice', colore: '#3987e5' },
+  { chiave: 'scelta',   nome: 'RT scelta',   colore: '#d95926' }
+];
+
+function puntiStorico() {
+  return sessioniSalvate()
+    .filter(s => s.testRT && s.testRT.pre)
+    .map(s => ({
+      data: s.data,
+      semplice: s.testRT.pre.semplice.media,
+      scelta: s.testRT.pre.scelta.media
+    }))
+    .filter(p => p.semplice > 0 || p.scelta > 0);
+}
+
+function svgEl(tag, attributi) {
+  const e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.keys(attributi || {}).forEach(k => e.setAttribute(k, attributi[k]));
+  return e;
+}
+
+function graficoRT(punti) {
+  const box = el('div', 'grafico');
+  if (punti.length < 2) {
+    box.appendChild(el('p', 'nota', punti.length
+      ? 'Serve almeno una seconda sessione con test RT per vedere un andamento.'
+      : 'Nessun test RT registrato finora.'));
+    return box;
+  }
+
+  const L = 44, R = 46, T = 14, B = 26, W = 320, H = 170;
+  const w = W - L - R, h = H - T - B;
+  const valori = [];
+  punti.forEach(p => RT_SERIE.forEach(s => { if (p[s.chiave] > 0) valori.push(p[s.chiave]); }));
+  /* passo scelto fra valori tondi: le etichette dell'asse devono leggersi
+     a colpo d'occhio (200, 250, 300...), non uscire dalla divisione in 4 */
+  const grezzoMin = Math.min.apply(null, valori), grezzoMax = Math.max.apply(null, valori);
+  const margine = Math.max(20, (grezzoMax - grezzoMin) * 0.08);
+  const candidati = [10, 20, 25, 50, 100, 200, 250];
+  const ampiezza = (grezzoMax + margine) - (grezzoMin - margine);
+  const passo = candidati.find(p => ampiezza / p <= 5) || 500;
+  const min = Math.floor((grezzoMin - margine) / passo) * passo;
+  const max = Math.max(min + passo, Math.ceil((grezzoMax + margine) / passo) * passo);
+
+  const x = i => L + (punti.length === 1 ? w / 2 : i * w / (punti.length - 1));
+  const y = v => T + h - (v - min) / (max - min) * h;
+
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'grafico-svg',
+                             role: 'img', 'aria-label': 'Andamento del tempo di reazione medio' });
+
+  /* griglia e asse: recessivi, mai in primo piano */
+  const tacche = Math.round((max - min) / passo);
+  for (let i = 0; i <= tacche; i++) {
+    const v = min + (max - min) * i / tacche;
+    const yy = y(v);
+    svg.appendChild(svgEl('line', { x1: L, y1: yy, x2: L + w, y2: yy, class: 'griglia' }));
+    const t = svgEl('text', { x: L - 8, y: yy + 4, class: 'asse', 'text-anchor': 'end' });
+    t.textContent = Math.round(v);
+    svg.appendChild(t);
+  }
+  const unita = svgEl('text', { x: L - 8, y: T - 4, class: 'asse', 'text-anchor': 'end' });
+  unita.textContent = 'ms';
+  svg.appendChild(unita);
+
+  RT_SERIE.forEach(serie => {
+    const validi = punti.map((p, i) => ({ i: i, v: p[serie.chiave] })).filter(p => p.v > 0);
+    if (validi.length < 2) return;
+    const d = validi.map((p, k) => (k ? 'L' : 'M') + x(p.i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
+    svg.appendChild(svgEl('path', { d: d, fill: 'none', stroke: serie.colore, 'stroke-width': 2,
+                                    'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    validi.forEach(p => {
+      /* anello di superficie: i punti restano leggibili anche sovrapposti */
+      svg.appendChild(svgEl('circle', { cx: x(p.i), cy: y(p.v), r: 4.5,
+                                        fill: serie.colore, stroke: '#141414', 'stroke-width': 2 }));
+    });
+    const ultimo = validi[validi.length - 1];
+    const etichetta = svgEl('text', { x: x(ultimo.i) + 9, y: y(ultimo.v) + 4, class: 'etichetta-diretta' });
+    etichetta.textContent = Math.round(ultimo.v);
+    svg.appendChild(etichetta);
+  });
+
+  const primo = svgEl('text', { x: L, y: H - 8, class: 'asse', 'text-anchor': 'start' });
+  primo.textContent = dataLeggibile(punti[0].data).slice(0, 5);
+  svg.appendChild(primo);
+  const fine = svgEl('text', { x: L + w, y: H - 8, class: 'asse', 'text-anchor': 'end' });
+  fine.textContent = dataLeggibile(punti[punti.length - 1].data).slice(0, 5);
+  svg.appendChild(fine);
+
+  box.appendChild(svg);
+
+  const legenda = el('div', 'legenda');
+  RT_SERIE.forEach(serie => {
+    const voce = el('span', 'voce-legenda');
+    const pallino = el('span', 'pallino');
+    pallino.style.background = serie.colore;
+    voce.appendChild(pallino);
+    voce.appendChild(document.createTextNode(serie.nome + ' (pre)'));
+    legenda.appendChild(voce);
+  });
+  box.appendChild(legenda);
+
+  /* lettura per tocco: su telefono sostituisce l'hover */
+  const lettura = el('p', 'nota lettura');
+  lettura.textContent = 'Tocca il grafico per leggere una sessione.';
+  box.appendChild(lettura);
+  svg.addEventListener('pointerdown', ev => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) / r.width * W;
+    let vicino = 0, distanza = Infinity;
+    punti.forEach((p, i) => { const d = Math.abs(x(i) - px); if (d < distanza) { distanza = d; vicino = i; } });
+    const p = punti[vicino];
+    lettura.textContent = dataLeggibile(p.data) + ' — semplice ' + p.semplice + ' ms · scelta ' + p.scelta + ' ms';
+  });
+
+  return box;
+}
+
+function disegnaStorico() {
+  const root = $('#storico-contenuto');
+  root.innerHTML = '';
+  const sessioni = sessioniSalvate().slice().reverse();
+
+  root.appendChild(el('h3', null, 'ANDAMENTO RT'));
+  root.appendChild(graficoRT(puntiStorico()));
+
+  root.appendChild(el('h3', null, 'SESSIONI (' + sessioni.length + ')'));
+  if (!sessioni.length) {
+    root.appendChild(el('p', 'nota', 'Nessuna sessione registrata.'));
+    return;
+  }
+
+  sessioni.forEach(s => {
+    const card = el('div', 'sessione');
+    const testa = el('div', 'sessione-testa');
+    const sx = el('div');
+    sx.appendChild(el('b', null, dataLeggibile(s.data)));
+    const comandi = s.round.reduce((t, r) => t + r.comandiEmessi, 0);
+    const densita = s.round.length ? (s.round.reduce((t, r) => t + r.densita, 0) / s.round.length) : 0;
+    sx.appendChild(el('span', 'sessione-sub', s.modalita + ' · ' + s.round.length + ' round · ' +
+      comandi + ' comandi · ' + densita.toFixed(1) + '/min'));
+    testa.appendChild(sx);
+    testa.appendChild(bottone('×', 'mini', () => {
+      if (!confirm('Eliminare questa sessione?')) return;
+      eliminaSessione(s.id); disegnaStorico();
+    }));
+    card.appendChild(testa);
+
+    const d = s.testRT && s.testRT.delta;
+    if (d) {
+      const segno = v => (v >= 0 ? '+' : '') + v;
+      const riga = el('div', 'sessione-delta');
+      riga.textContent = 'Δ semplice ' + segno(d.sempliceMediaMs) + ' ms (' + segno(d.sempliceMediaPct) + '%)' +
+                         ' · Δ scelta ' + segno(d.sceltaMediaMs) + ' ms (' + segno(d.sceltaMediaPct) + '%)';
+      riga.classList.add(d.sempliceMediaMs > 0 ? 'peggio' : 'meglio');
+      card.appendChild(riga);
+    }
+
+    const dettaglio = el('div', 'sessione-dettaglio');
+    dettaglio.hidden = true;
+    if (s.testRT && (s.testRT.pre || s.testRT.post)) dettaglio.appendChild(tabellaRT(s.testRT));
+    if (s.round.length) {
+      const t = el('table', 'rt');
+      const th = el('tr');
+      ['round', 'comandi', '/min', 'no-go', 'stop', 'err', 'RPE'].forEach(x => th.appendChild(el('th', null, x)));
+      t.appendChild(th);
+      s.round.forEach(r => {
+        const tr = el('tr');
+        [r.n, r.comandiEmessi, r.densita, r.noGoEmessi, r.stopEmessi, r.erroriRiportati,
+         r.rpe == null ? '—' : r.rpe].forEach(v => tr.appendChild(el('td', null, String(v))));
+        t.appendChild(tr);
+      });
+      dettaglio.appendChild(t);
+    }
+    card.appendChild(dettaglio);
+    testa.addEventListener('click', ev => {
+      if (ev.target.dataset && ev.target.textContent === '×') return;
+      dettaglio.hidden = !dettaglio.hidden;
+    });
+    root.appendChild(card);
+  });
+}
+
+/* =========================================================================
    8. UI
    ========================================================================= */
 
@@ -930,6 +1646,7 @@ function mostraSchermo(nome) {
   if (nome === 'impostazioni') costruisciPannello($('#pannello-impostazioni'));
   if (nome === 'setup') costruisciPannello($('#pannello-setup'));
   if (nome === 'voce') Clip.indicizza().then(disegnaSchermoVoce);
+  if (nome === 'storico') disegnaStorico();
 }
 
 let toastTimer = null;
@@ -946,9 +1663,26 @@ function mmss(ms) {
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 }
 
-function mostraUltimoComando(stimolo) {
-  const lato = stimolo.latoFisico ? ' · ' + (stimolo.latoFisico === 'sinistra' ? 'SX' : 'DX') : '';
-  $('#ultimo-comando').textContent = stimolo.parlato.toUpperCase() + lato;
+/* testo di verifica: non va letto durante l'azione, serve al controllo dopo */
+function mostraUltimoComando(evento) {
+  const e = $('#ultimo-comando');
+  e.classList.remove('nogo', 'stop', 'cambio');
+  if (evento.tipo === 'nogo') {
+    e.textContent = (evento.modo === 'A' ? cfg.parolaNoGo.toUpperCase() : '·· NO-GO ··');
+    e.classList.add('nogo');
+    return;
+  }
+  if (evento.tipo === 'stop') {
+    e.textContent = 'STOP';
+    e.classList.add('stop');
+    return;
+  }
+  const testo = evento.stimoli.map(s => {
+    const lato = s.latoFisico ? (s.latoFisico === 'sinistra' ? ' sx' : ' dx') : '';
+    return s.parlato.toUpperCase() + lato;
+  }).join('  ›  ');
+  e.textContent = (evento.cambio ? '↻ ' : '') + testo;
+  if (evento.cambio) e.classList.add('cambio');
 }
 
 function aggiornaUISessione() {
@@ -1119,6 +1853,72 @@ function sezForeperiod() {
   f.appendChild(riga('lambda', numeroCfg('lambda', 0.1, 12, 0.1, true)));
   f.appendChild(el('p', 'nota', 'Intervallo di attesa fra la fine di un comando e il successivo. ' +
     'lambda alto = attese più corte e hazard più piatta, lambda basso = distribuzione più vicina all\'uniforme.'));
+  return f;
+}
+
+function sezCatene() {
+  const f = document.createDocumentFragment();
+  f.appendChild(titoloSezione('CATENE'));
+  f.appendChild(riga('probabilità', numeroCfg('pCatena', 0, 1, 0.05, true)));
+  f.appendChild(riga('lunghezza min', numeroCfg('catenaMin', 1, 8, 1)));
+  f.appendChild(riga('lunghezza max', numeroCfg('catenaMax', 1, 8, 1)));
+  f.appendChild(el('p', 'nota', 'Una catena è pronunciata come sequenza unica con 180 ms fra le parole. ' +
+    'I passaggi seguono la matrice dei piani: striking → striking, lotta, movimento · ' +
+    'lotta → lotta, terra, striking · terra → terra, lotta · movimento → striking, lotta.'));
+  return f;
+}
+
+function sezGoNoGo() {
+  const f = document.createDocumentFragment();
+  f.appendChild(titoloSezione('NO-GO'));
+  f.appendChild(riga('probabilità', numeroCfg('pNoGo', 0, 1, 0.05, true)));
+  f.appendChild(riga('segnale', selectCfg('noGoModo', [
+    { valore: 'A', etichetta: 'A — parola' },
+    { valore: 'B', etichetta: 'B — doppio beep 880 Hz' },
+    { valore: 'AB', etichetta: 'A e B alternate' }
+  ])));
+  const parola = el('input'); parola.type = 'text'; parola.value = cfg.parolaNoGo;
+  parola.addEventListener('change', () => {
+    cfg.parolaNoGo = parola.value.trim() || 'fake'; parola.value = cfg.parolaNoGo; salvaCfg();
+  });
+  f.appendChild(riga('parola no-go', parola));
+  f.appendChild(el('p', 'nota', 'Stimolo a cui NON si deve rispondere.'));
+
+  f.appendChild(titoloSezione('STOP-SIGNAL'));
+  f.appendChild(riga('probabilità', numeroCfg('pStop', 0, 1, 0.05, true)));
+  f.appendChild(riga('SSD min (ms)', numeroCfg('ssdMin', 50, 1000, 10)));
+  f.appendChild(riga('SSD max (ms)', numeroCfg('ssdMax', 50, 1500, 10)));
+  const cambio = el('input'); cambio.type = 'checkbox'; cambio.checked = !!cfg.stopConCambio;
+  cambio.addEventListener('change', () => { cfg.stopConCambio = cambio.checked; salvaCfg(); });
+  const labCambio = el('label');
+  labCambio.appendChild(cambio);
+  labCambio.appendChild(document.createTextNode(' stop con cambio di comando'));
+  const rCambio = el('div', 'campo-riga'); rCambio.appendChild(labCambio);
+  f.appendChild(rCambio);
+  f.appendChild(riga('segnale (senza cambio)', selectCfg('stopSegnale', [
+    { valore: 'beep', etichetta: 'beep grave 220 Hz' },
+    { valore: 'parola', etichetta: 'parola "stop"' }
+  ])));
+  f.appendChild(el('p', 'nota', 'Con il cambio attivo, dopo l\'SSD arriva un comando nuovo che sovrascrive ' +
+    'il precedente: è quello che succede davvero quando vieni finteggiato. ' +
+    'No-go e stop non capitano mai sullo stesso stimolo.'));
+  return f;
+}
+
+function sezTestRT() {
+  const f = document.createDocumentFragment();
+  f.appendChild(titoloSezione('TEST RT'));
+  const chk = el('input'); chk.type = 'checkbox'; chk.checked = !!cfg.testRT;
+  chk.addEventListener('change', () => { cfg.testRT = chk.checked; salvaCfg(); });
+  const lab = el('label');
+  lab.appendChild(chk);
+  lab.appendChild(document.createTextNode(' test RT prima e dopo la sessione'));
+  const r = el('div', 'campo-riga'); r.appendChild(lab);
+  f.appendChild(r);
+  f.appendChild(riga('stimoli RT semplice', numeroCfg('rtSempliceN', 5, 60, 1)));
+  f.appendChild(riga('stimoli RT scelta', numeroCfg('rtSceltaN', 5, 60, 1)));
+  f.appendChild(el('p', 'nota', 'Il delta fra il test iniziale e quello finale è l\'indice di fatica ' +
+    'del sistema nervoso: è l\'unica misura oggettiva senza sensori.'));
   return f;
 }
 
@@ -1319,8 +2119,9 @@ function sezReset() {
 
 function costruisciPannello(root) {
   root.innerHTML = '';
-  [sezRound(), sezForeperiod(), sezComandi(), sezCategorie(), sezGuardia(),
-   sezVoce(), sezCustom(), sezPreset(), sezReset()].forEach(x => root.appendChild(x));
+  [sezRound(), sezForeperiod(), sezCatene(), sezGoNoGo(), sezTestRT(),
+   sezComandi(), sezCategorie(), sezGuardia(), sezVoce(), sezCustom(),
+   sezPreset(), sezReset()].forEach(x => root.appendChild(x));
   aggiornaNoteGuardia();
   aggiornaDurataTotale();
   aggiornaConteggioPool();
@@ -1417,11 +2218,39 @@ function primoGestoUtente() {
   Voce.sblocca();
 }
 
-/* avvia la sessione controllando che il pool non sia vuoto */
+/* avvia la sessione controllando che il pool non sia vuoto.
+   Con il test RT attivo, il blocco iniziale precede il primo round: il
+   confronto pre/post e' il senso della misura. */
 function avviaSessione(modo) {
   primoGestoUtente();                 /* sblocco audio dentro il gesto utente */
   if (!pool().length) { mostraToast('Nessun comando attivo: attiva almeno un colpo'); return; }
-  Sessione.avvia(modo);
+  if (!cfg.testRT) { Sessione.avvia(modo); return; }
+  TestRT.avvia('pre',
+    risultati => Sessione.avvia(modo, risultati),
+    () => mostraSchermo('home'));
+}
+
+/* TEST RT dalla home: gira da solo e finisce nello storico */
+function avviaTestRTsingolo() {
+  primoGestoUtente();
+  TestRT.avvia('pre', risultati => {
+    const record = {
+      id: uuid(), data: new Date().toISOString(), modalita: 'test-rt',
+      configurazione: clonaProfondo(cfg), round: [], distribuzioneComandi: {},
+      testRT: { pre: risultati, post: null, delta: null }
+    };
+    salvaSessione(record);
+    TestRT.mostraTabella(record.testRT);
+  }, () => mostraSchermo('home'));
+}
+
+/* PWA: registrazione del service worker. Se manca (http su IP di rete,
+   private browsing) l'app funziona lo stesso, ma non offline. */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .catch(e => console.warn('service worker non registrato:', e.message));
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1433,7 +2262,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $$('.modo').forEach(b => b.addEventListener('click', () => {
     const modo = b.dataset.modo;
-    if (modo === 'test-rt') { mostraToast('Test RT: fase 5 del piano'); return; }
+    if (modo === 'test-rt') { avviaTestRTsingolo(); return; }
     if (modo === 'libera') { mostraSchermo('setup'); return; }   /* prima si parametra, poi si parte */
     applicaPreset(modo);
     avviaSessione(modo);
@@ -1467,6 +2296,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* se si esce dalla schermata voce con una registrazione aperta, chiudila */
   $$('#scr-voce [data-vai]').forEach(b => b.addEventListener('click', () => Registratore.annulla()));
+
+  /* test RT */
+  $('#rt-inizia').addEventListener('click', () => { primoGestoUtente(); TestRT.avviaBlocco(); });
+  $('#rt-salta').addEventListener('click', () => {
+    const cb = TestRT.callback;
+    TestRT.ferma();
+    cb(null);
+  });
+  $('#rt-esci').addEventListener('click', () => TestRT.abbandona());
+  $('#rt-chiudi').addEventListener('click', () => {
+    mostraSchermo('home');
+    mostraToast('Sessione salvata');
+  });
+  $('#rt-semplice').addEventListener('pointerdown', ev => { ev.preventDefault(); TestRT.tocco(null, ev); });
+  $$('#rt-quadranti .quadrante').forEach(q => q.addEventListener('pointerdown', ev => {
+    ev.preventDefault();
+    TestRT.tocco(parseInt(q.dataset.q, 10), ev);
+  }));
+
+  /* storico */
+  $('#btn-csv').addEventListener('click', () => {
+    if (!sessioniSalvate().length) { mostraToast('Nessuna sessione da esportare'); return; }
+    scaricaCSV();
+  });
+  $('#btn-copia-csv').addEventListener('click', () => {
+    if (!sessioniSalvate().length) { mostraToast('Nessuna sessione da esportare'); return; }
+    const testo = csvSessioni();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(testo)
+        .then(() => mostraToast('CSV copiato negli appunti'))
+        .catch(() => mostraToast('Copia negata dal browser'));
+    } else { mostraToast('Appunti non disponibili'); }
+  });
 });
 
 /* =========================================================================
@@ -1552,6 +2414,8 @@ function debugLateralizzazione() {
 
 window.MMARX = {
   cfg: () => cfg, libreria, pool, foreperiod, selezionaComando, costruisciStimolo,
-  latoFisico, Sessione, Suono, Voce, Clip, Registratore, TRANSIZIONI, armaA,
+  latoFisico, costruisciEvento, costruisciCatena, catenaValida,
+  Sessione, Suono, Voce, Clip, Registratore, TestRT, TRANSIZIONI, armaA,
+  statisticheRT, deltaRT, sessioniSalvate, csvSessioni, salvaSessione,
   debugForeperiod, debugSelezione, debugLateralizzazione
 };

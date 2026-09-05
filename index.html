@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <title>MMA Reflex Trainer</title>
+<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAdUlEQVR42mNgGAVDAvzHAWhoNBWswWMWFawhUjOZdpCqh2Q7yPA1CVrIjjpiNeJX99/aAIjItwCPIojRyIgcO3CpwDQdqx2DxgIiTcdjx0BbMPTjgIbJlOYZjR5FBc0LO3oU1zSvcOhRZdKj0qdTs2UU0AEAAIifhh//e809AAAAAElFTkSuQmCC">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAACmklEQVR42u3dQU4jQRBE0T6S99z/XLD1DoS7OiMz3xcH6Aq/KUuDbK5LkiRJkiRJkiRJkiRJkiRJkiS99/1xNqSBFSBAYYISLLLyujBBCRaIYIEIFoiQwQcWiGCBiJbJ4IMMPlqx6P5UZISOzscEGR6bjPpx+Uif1XHIaLAjHxELOiAZXYfjo2Ay5yVj1Ex8GMjxTWOEkF1MMRyHOQxiCLOYwDiF5/e/PvP3IcNKdx77Wtm6ocgwl6vSYv4dGM0hTZd1Qia2rOfaMKBrw4bUmxF5S2YdqfhRv16//hhzF/a/mAhRMurySP/Q4r9Y1BIZgiOZ+ecsqogMuTwyz3AvixIicDST8aSP9jgCb7/TMh7z0f6dZaeMTB9wpMh4xgccXWU84KMxDjL4SH/uWhmnfcABx2Ics2Xk+IADjngcCdddjoyjPvq9s8ABR+4Tp8k45wMOOFbiWPKeEvLOAkeojITLAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAwy/e/MoejtCp4YBj1hN7T4EDjoYfXfHRBB9NgAOOttcdGXDAAUdDH0tG5oOMoU/va5/gSPGxcN6DT++rJrtvO0G3L6mFo8bH8mHn3H6+GN/lcZyISYcz98d4XB73KDEm7JaMPBIfu2aEw4YuDwOCbz32TeeQRut5zuU+di0Gh7kc2FCuSis5uX3SD7/Eh3FMYBZDGMQcpghaZNIuRjCN4xvIwdNmarfUtvPW79VisiXHNJwDNpwvcMGp5+q6Y8iUw44zatCyD1r2P8IiHw99hVDPx+bj4NyNHpWPs69B5lMhsiivOx9k8EEGIlggggUfZCCCBSJYIIKF2inxuiCCBSVMgAIEKzRIkiRJkiRJkiRJkiRJkiRJknRTP0QKKE3CeBtDAAAAAElFTkSuQmCC">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -83,6 +86,36 @@
   </div>
 </div>
 
+<!-- ============ TEST RT ============ -->
+<section id="scr-rt" class="screen">
+  <div id="rt-intro" class="rt-intro">
+    <h2 id="rt-titolo">TEST RT</h2>
+    <p id="rt-testo" class="rt-testo"></p>
+    <button id="rt-inizia" class="btn primario">INIZIA</button>
+    <button id="rt-salta" class="btn secondario largo">SALTA IL TEST</button>
+  </div>
+
+  <div id="rt-area" class="rt-area">
+    <div class="rt-testata">
+      <div id="rt-progresso" class="rt-progresso">0 / 0</div>
+      <button id="rt-esci" class="btn mini">ESCI</button>
+    </div>
+    <div id="rt-semplice" class="rt-tap">TOCCA<br>AL BEEP</div>
+    <div id="rt-quadranti" class="rt-quadranti">
+      <div class="quadrante" data-q="0"></div>
+      <div class="quadrante" data-q="1"></div>
+      <div class="quadrante" data-q="2"></div>
+      <div class="quadrante" data-q="3"></div>
+    </div>
+    <div id="rt-esito" class="rt-esito">&nbsp;</div>
+  </div>
+
+  <div id="rt-risultati" class="rt-risultati">
+    <div class="scroll" id="rt-tabella"></div>
+    <button id="rt-chiudi" class="btn primario">CONTINUA</button>
+  </div>
+</section>
+
 <!-- ============ SETUP SESSIONE LIBERA ============ -->
 <section id="scr-setup" class="screen">
   <div class="testata">
@@ -125,8 +158,10 @@
     <button class="btn indietro" data-vai="home">‹ HOME</button>
     <h2>STORICO</h2>
   </div>
-  <div class="scroll">
-    <p class="nota">Log, storico ed export CSV sono la fase 6 del piano di costruzione. Non ancora attivi.</p>
+  <div class="scroll" id="storico-contenuto"></div>
+  <div class="barra-azione">
+    <button id="btn-csv" class="btn secondario largo">ESPORTA CSV</button>
+    <button id="btn-copia-csv" class="btn secondario largo">COPIA CSV NEGLI APPUNTI</button>
   </div>
 </section>
 

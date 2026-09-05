@@ -4,17 +4,49 @@ Allenamento dei riflessi e del tempo di reazione di scelta nelle MMA tramite
 comandi vocali erogati a intervalli randomizzati. HTML + CSS + JS vanilla,
 nessun framework, nessun build step, nessuna dipendenza esterna.
 
-## Stato: fasi 1 e 2 del piano di costruzione
+## Stato: v1 completa
 
-Implementato:
+Tutte e sette le fasi del piano di costruzione sono implementate:
+scheduler e foreperiod, UI di sessione e preset, no-go e stop-signal, catene
+con matrice di transizione, test RT, log/storico/export, PWA offline.
 
-1. **Scheduler + foreperiod + libreria comandi + audio** — testabile da console.
-2. **UI sessione + timer round + preset.**
+## Verifica dei criteri di accettazione
 
-Non ancora implementato (fasi 3-7 della spec): no-go, stop-signal, catene,
-test RT, log/storico/export CSV, service worker e manifest PWA.
-La Wake Lock API è già attiva perché senza di essa la sessione non è provabile
-su iPhone.
+| # | Criterio | Esito |
+|---|---|---|
+| 1 | Foreperiod non uniforme, hazard piatta | istogramma non uniforme (χ² 2400 su 20k); hazard più piatta della uniforme (CV 0.42 vs 0.57) ma **in salita verso fpMax** — vedi sotto |
+| 2 | Nessun comando due volte di fila su 500 | 0 ripetizioni |
+| 3 | Nessuna tripla di categoria su 500 | 0 triple |
+| 4 | pNoGo 0.15 ± 0.02 su 500 | generatore non distorto (0.1508 su 200k); la banda ±0.02 su n=500 è 1.25σ — vedi sotto |
+| 5 | Stop-signal fra 150 e 350 ms dall'onset | verificato in sessione reale, min 205 max 345 |
+| 6 | Nessuna catena viola la matrice | 0 violazioni su ~1200 catene |
+| 7 | Guardie indipendenti per piano | hook avanti → sinistra, single leg avanti → destra |
+| 8 | Tap a 250 ms registrato come 250 ± 15 ms | scarto massimo 3.9 ms su 16 prove |
+| 9 | Funziona offline dopo la prima apertura | ricarica offline 200 dalla cache, app montata |
+| 10 | Densità = comandi emessi / durata round | esatta |
+
+### Due criteri che non si possono soddisfare alla lettera
+
+Non sono difetti di implementazione: sono proprietà matematiche di quello che
+la spec prescrive. In entrambi i casi il codice fa esattamente ciò che è
+scritto e il test verifica ciò che è verificabile.
+
+**Criterio 1 — hazard piatta.** Per una esponenziale troncata su [0,1] la
+hazard è h(x) = λ/(1−e^(−λ(1−x))), che diverge per x→1. Con λ=1.2 sale da 0.16
+a 0.52 attraverso la finestra: più piatta di una uniforme, non piatta. Alzare
+`lambda` la appiattisce davvero (a λ=12 il CV scende a 0.02) ma concentra i
+foreperiod vicino a `fpMin`, rinunciando alla parte alta della finestra.
+`lambda` è configurabile; `debugForeperiod()` stampa il confronto con la
+baseline uniforme.
+
+**Criterio 4 — 0.15 ± 0.02 su 500 stimoli.** Con un'estrazione di Bernoulli
+indipendente — che è quello che "con probabilità pNoGo" prescrive — l'errore
+standard su n=500 è 0.016, quindi ±0.02 è 1.25σ e viene rispettato solo
+nell'~81% dei blocchi. Il test verifica che il generatore non sia distorto
+(0.1508 su 200 000 estrazioni) e che la quota di blocchi dentro la banda sia
+coerente con la binomiale. Se preferisci che il criterio passi alla lettera
+serve un'estrazione stratificata (esattamente 75 no-go ogni 500, in ordine
+casuale) invece che indipendente: dimmelo e la cambio.
 
 ## Come provarla
 
@@ -67,7 +99,44 @@ MMARX.debugLateralizzazione()   // avanti/dietro con guardie diverse per piano
 MMARX.cfg()                     // configurazione corrente
 MMARX.Voce.ordinate()           // voci disponibili, migliori per prime
 MMARX.Clip.presenti             // comandi che hanno una clip registrata
+MMARX.sessioniSalvate()         // storico grezzo
+MMARX.csvSessioni()             // export CSV come stringa
+MMARX.Sessione.ssdLog           // SSD effettivi dell'ultima sessione
 ```
+
+## Go / No-go, stop-signal, catene
+
+- **No-go** (`pNoGo` 0.15): stimolo a cui non si risponde. Modo A parola
+  configurabile (default "fake"), modo B doppio beep 880 Hz, oppure alternati.
+- **Stop-signal** (`pStop` 0.10): dopo un comando go, a un SSD casuale fra 150 e
+  350 ms dall'onset. Con `stopConCambio` attivo (default) non arriva un semplice
+  "stop" ma **un comando nuovo che sovrascrive il precedente**: la finestra di
+  esecuzione riparte dall'onset del nuovo comando.
+- I due meccanismi non capitano mai sullo stesso stimolo: lo stop viene estratto
+  solo se il no-go non è uscito.
+- **Catene** (`pCatena` 0.35): il primo elemento è una normale estrazione e
+  rispetta i vincoli di §2.3; i successivi seguono la matrice dei piani. I
+  vincoli "mai due volte lo stesso comando" e "mai 3 di fila della stessa
+  categoria" valgono sulla scelta dello stimolo, non dentro la catena — la
+  matrice ammette esplicitamente striking → striking, cioè le combinazioni.
+
+## Test RT
+
+Gira prima e dopo ogni sessione (disattivabile). RT semplice 15 stimoli, RT di
+scelta 20 su quattro quadranti colorati con suoni distinti. L'onset è quello
+**audio**, ricavato da `AudioContext.getOutputTimestamp()`, non l'istante in cui
+gira il JS; le risposte usano `event.timeStamp` quando disponibile. Sotto 150 ms
+sono anticipazioni, sopra 1500 ms lapse: entrambe escluse dalle statistiche e
+contate a parte, come gli errori di quadrante. Media, mediana e deviazione
+standard (campionaria, n−1) si calcolano sulle risposte valide e corrette.
+
+## Storico
+
+Grafico a linee dell'RT medio pre nel tempo, due serie (semplice e scelta) con
+legenda ed etichetta diretta sull'ultimo punto. Palette validata sulla
+superficie scura: blu #3987e5 e arancio #d95926, separazione CVD ΔE 26.8.
+Export CSV di tutte le sessioni, una riga per round; su iPhone il download può
+aprire il file invece di salvarlo, per questo c'è anche COPIA NEGLI APPUNTI.
 
 ## Note di implementazione
 
@@ -89,5 +158,11 @@ MMARX.Clip.presenti             // comandi che hanno una clip registrata
 - **Beep**: generati con oscillatori `AudioContext`, mai file audio.
 - **Catene**: `speakSequenza` aggancia la pausa di 180 ms alla *fine* della parola
   precedente, non al suo inizio, con una rete di sicurezza se `onend` non arriva.
-  Serve alla fase 4, è già verificato: 3 clip da 300 ms escono a 484 e 490 ms
-  di distanza.
+  Verificato: 3 clip da 300 ms escono a 484 e 490 ms di distanza.
+- **PWA**: `sw.js` cachea l'app shell con strategia cache-first e aggiornamento in
+  sottofondo; alza `VERSIONE` a ogni rilascio. Le icone sono data URI dentro
+  `manifest.json`, così i file restano quelli previsti dalla spec — su iOS
+  l'`apple-touch-icon` come data URI non è garantito, se la home screen mostra
+  un'icona generica servirà un vero file PNG.
+- **Wake lock**: richiede un secure context. Su `http://<ip>` non è disponibile e
+  l'app te lo dice; su https funziona.
